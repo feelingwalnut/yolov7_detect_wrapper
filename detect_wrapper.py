@@ -7,8 +7,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 # CONFIGURATION
+delete_annotated_images = True  # Set to False to keep annotated detection images
 image_dir = Path("/tmp/motion/image")
-video_dir = Path("/tmp/motion")  # FIXED: Changed from image_dir
+video_dir = Path("/tmp/motion")
 output_dir = Path("/home/motion/files")
 confidence_threshold = 0.6
 weights_path = "/home/motion/yolov7/yolov7-tiny.pt"
@@ -42,26 +43,30 @@ if result.returncode != 0:
 
 # Step 2: Parse detections
 labels_dir = detect_out_dir / "labels"
-images_dir = detect_out_dir  # Annotated image output dir
+images_dir = detect_out_dir
 
+# No detections? Clean up matching files only
 if not labels_dir.exists() or not any(labels_dir.glob("*.txt")):
-    print("[INFO] No detections found (no label files). Cleaning up...")
+    print("[INFO] No detections found. Cleaning up input and output files...")
 
-    for image in image_dir.glob("*.webp"):
-        image.unlink()
-        print(f"  → Deleted image: {image.name}")
+    for image_file in image_dir.glob("*.webp"):
+        image_file.unlink()
+        print(f"  → Deleted image: {image_file.name}")
 
-    for video in video_dir.glob("*.mkv"):
-        video.unlink()
-        print(f"  → Deleted video: {video.name}")
+    for video_file in video_dir.glob("*.mkv"):
+        video_file.unlink()
+        print(f"  → Deleted video: {video_file.name}")
 
-    for label in labels_dir.glob("*.txt"):
-        label.unlink()
-        print(f"  → Deleted label file: {label.name}")
+    for f in detect_out_dir.glob("*"):
+        if f.suffix.lower() in [".webp", ".jpg", ".jpeg", ".png"]:
+            f.unlink()
+            print(f"  → Deleted annotated image: {f.name}")
 
-    for annotated_image in images_dir.glob("*.*"):
-        annotated_image.unlink()
-        print(f"  → Deleted annotated image: {annotated_image.name}")
+    # Ensure labels folder is deleted too
+    if labels_dir.exists():
+        for label_file in labels_dir.glob("*.txt"):
+            label_file.unlink()
+            print(f"  → Deleted label file: {label_file.name}")
 
     exit(0)
 
@@ -83,19 +88,11 @@ for label_file in labels_dir.glob("*.txt"):
     date, hour, minute, second, location = match.groups()
     image_time = datetime.strptime(f"{date} {hour}:{minute}:{second}", "%m-%d-%Y %H:%M:%S")
 
-    # 1. Delete original image
-#    original_image = image_dir / f"{base_name}.webp"
-#    if original_image.exists():
-#        original_image.unlink()
-#        print(f"  → Deleted original image: {original_image.name}")
-#    else:
-#        print(f"  × Image not found to delete: {base_name}")
     # 1. Move original image
     original_image = image_dir / f"{base_name}.webp"
     if original_image.exists():
         shutil.move(str(original_image), output_dir / original_image.name)
         print(f"  → Moved original image: {original_image.name}")
-        # Define the full path to the moved image
         dest_image_path = output_dir / original_image.name
 
         # Send pushover notification with image
@@ -114,14 +111,13 @@ for label_file in labels_dir.glob("*.txt"):
             print(f"  × Failed to send Pushover notification: {e}")
     else:
         print(f"  × Original image not found to move: {base_name}")
-        
+
     # 2. Move matching videos (within ±40 seconds)
     matching_videos = []
     for video in video_dir.glob("*.mkv"):
         video_match = re.match(filename_pattern, video.stem)
         if not video_match:
             continue
-
         v_date, v_hour, v_min, v_sec, v_location = video_match.groups()
         if v_location.lower() != location.lower():
             continue
@@ -131,8 +127,7 @@ for label_file in labels_dir.glob("*.txt"):
         except ValueError:
             continue
 
-        time_diff = abs((video_time - image_time).total_seconds())
-        if time_diff <= tolerance_seconds:
+        if abs((video_time - image_time).total_seconds()) <= tolerance_seconds:
             matching_videos.append(video)
 
     if matching_videos:
@@ -141,29 +136,24 @@ for label_file in labels_dir.glob("*.txt"):
             print(f"  → Moved video: {video.name}")
     else:
         print(f"  × No matching videos for: {base_name}")
-        print(f"    ⤷ Looking in: {video_dir}")
-        print(f"    ⤷ Files: {[v.name for v in video_dir.glob('*.mkv')]}")
 
-    # 3. Move annotated detection image
+    # 3. Delete annotated detection image
     annotated_candidates = [
         images_dir / f"{base_name}.{ext}"
         for ext in ["webp", "jpg", "jpeg", "png"]
     ]
-    annotated_files = [f for f in annotated_candidates if f.exists()]
-
-    if annotated_files:
-        print(f"  → Annotated image retained: {annotated_files[0].name}")
-    else:
+    deleted = False
+    for f in annotated_candidates:
+        if f.exists():
+            if delete_annotated_images:
+                f.unlink()
+                print(f"  → Deleted annotated image: {f.name}")
+            else:
+                print(f"  → Skipped deletion of annotated image: {f.name}")
+            deleted = True
+            break
+    if not deleted:
         print(f"  × Annotated image not found: {base_name}")
-
-#    if annotated_files:
-#        annotated_image = annotated_files[0]
-#        shutil.move(str(annotated_image), output_dir / annotated_image.name)
-#        print(f"  → Moved annotated image: {annotated_image.name}")
-#    else:
-#        print(f"  × Annotated image not found: {base_name}")
-        print(f"    ⤷ Checked: {[f.name for f in annotated_candidates]}")
-        print(f"    ⤷ Files in annotated dir: {[f.name for f in images_dir.iterdir()]}")
 
     # 4. Delete the label file
     label_file.unlink()
