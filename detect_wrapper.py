@@ -56,11 +56,14 @@ if not labels_dir.exists() or not any(labels_dir.glob("*.txt")):
     for video_file in video_dir.glob("*.mkv"):
         video_file.unlink()
         print(f"  → Deleted video: {video_file.name}")
-
-    for f in detect_out_dir.glob("*"):
-        if f.suffix.lower() in [".webp", ".jpg", ".jpeg", ".png"]:
-            f.unlink()
-            print(f"  → Deleted annotated image: {f.name}")
+        
+    if delete_annotated_images:
+        for f in detect_out_dir.glob("*"):
+            if f.suffix.lower() in [".webp", ".jpg", ".jpeg", ".png"]:
+                f.unlink()
+                print(f"  → Deleted annotated image: {f.name}")
+    else:
+        print("  → Skipped deletion of annotated images due to configuration.")
 
     # Ensure labels folder is deleted too
     if labels_dir.exists():
